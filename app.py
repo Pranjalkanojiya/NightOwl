@@ -1,3 +1,7 @@
+from extractor import extract
+from chunker import chunk_documents
+from embeddings import create_embeddings
+from vector_store import VectorStore
 import os
 import streamlit as st
 
@@ -6,6 +10,23 @@ st.set_page_config("NightOwl", "🦉", "wide")
 
 UPLOAD_DIR = "data/documents"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@st.cache_resource
+def build_store(files):
+    store = VectorStore()
+
+    for file in files:
+        documents = extract(os.path.join(UPLOAD_DIR, file))
+        chunks = chunk_documents(documents)
+
+        if chunks:
+            embeddings = create_embeddings(
+                [chunk["text"] for chunk in chunks]
+            )
+            store.add(chunks, embeddings)
+
+    return store
 
 
 # ---------- STYLE ----------
@@ -34,7 +55,6 @@ section[data-testid="stSidebar"] {
     border-right:1px solid #ffffff0d;
 }
 
-/* Logo */
 .logo {
     display:flex;
     align-items:center;
@@ -62,7 +82,6 @@ section[data-testid="stSidebar"] {
     letter-spacing:1px;
 }
 
-/* Hero */
 .eyebrow {
     color:#818cf8;
     font-size:11px;
@@ -91,7 +110,6 @@ section[data-testid="stSidebar"] {
     margin-top:15px;
 }
 
-/* Status */
 .status {
     display:inline-flex;
     gap:7px;
@@ -113,7 +131,6 @@ section[data-testid="stSidebar"] {
     box-shadow:0 0 10px #22c55e;
 }
 
-/* Upload card */
 .upload-card {
     padding:30px;
     text-align:center;
@@ -141,7 +158,6 @@ section[data-testid="stSidebar"] {
     margin-top:7px;
 }
 
-/* Cards */
 .card,.stat {
     background:#0d1223b8;
     border:1px solid #94a3b51c;
@@ -166,7 +182,6 @@ section[data-testid="stSidebar"] {
     letter-spacing:1px;
 }
 
-/* Input */
 div[data-testid="stTextInput"] input {
     background:#080c1ae6 !important;
     border:1px solid #29345d !important;
@@ -175,7 +190,6 @@ div[data-testid="stTextInput"] input {
     height:55px !important;
 }
 
-/* Buttons */
 .stButton > button {
     background:linear-gradient(135deg,#4f46e5,#7c3aed) !important;
     color:white !important;
@@ -186,7 +200,6 @@ div[data-testid="stTextInput"] input {
     box-shadow:0 8px 25px #4f46e540;
 }
 
-/* Documents */
 .doc {
     padding:10px 12px;
     margin:7px 0;
@@ -239,7 +252,6 @@ with st.sidebar:
     files = sorted(os.listdir(UPLOAD_DIR))
 
     if files:
-
         for file in files:
             size = os.path.getsize(
                 os.path.join(UPLOAD_DIR, file)
@@ -254,9 +266,7 @@ with st.sidebar:
                 """,
                 unsafe_allow_html=True
             )
-
     else:
-
         st.caption("No material uploaded yet.")
 
     st.divider()
@@ -352,47 +362,56 @@ if uploads:
 st.markdown("### 💬 Ask your course")
 
 question = st.text_input(
-    "Question",
-    placeholder="What is the difference between BFS and DFS?",
-    label_visibility="collapsed"
+    "Ask NightOwl",
+    placeholder="Ask something from your study material..."
 )
 
-ask, _ = st.columns([1, 5])
+if question:
 
-with ask:
+    files = sorted(os.listdir(UPLOAD_DIR))
 
-    clicked = st.button(
-        "✦  Ask NightOwl",
-        use_container_width=True
-    )
+    if not files:
 
-
-if clicked:
-
-    if not question.strip():
-
-        st.warning("Enter a question first.")
-
-    elif not files:
-
-        st.warning("Upload your course material first.")
+        st.warning("Upload study material first.")
 
     else:
 
-        st.markdown(
-            """
-            <div class="card">
-                <div class="small">NIGHTOWL RESPONSE</div>
-                <h3>Evidence retrieval is coming next.</h3>
-                <p style="color:#94a3b8">
-                    Your material is safely stored.
-                    NightOwl will soon extract the content,
-                    find relevant evidence and answer from it.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        with st.spinner("Searching your knowledge vault..."):
+
+            store = build_store(files)
+
+            question_embedding = create_embeddings([question])[0]
+
+            results = store.search(
+                question_embedding,
+                k=5,
+                threshold=0.40
+            )
+
+        if not results:
+
+            st.warning(
+                "I couldn't find enough relevant information "
+                "in your uploaded material."
+            )
+
+        else:
+
+            st.markdown("### Evidence Found")
+
+            for result in results:
+
+                chunk = result["chunk"]
+
+                st.markdown(
+                    f"""
+                    **{chunk['source']} — Page {chunk['page']}**
+
+                    **Similarity:** `{result['score']:.4f}`
+
+                    {chunk['text'][:500]}
+                    """
+                )
 
 
 # ---------- STATS ----------
@@ -418,7 +437,7 @@ st.markdown(
         font-size:11px;
         margin-top:30px;
     ">
-        🦉 NightOwl · Evidence over assumptions
+        🦉NightOwl · Evidence over assumptions
     </div>
     """,
     unsafe_allow_html=True
