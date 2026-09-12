@@ -22,3 +22,7 @@ data/processed/*
 # OS
 .DS_Store
 Thumbs.db
+
+New-Item static\.gitkeep -ItemType File -Force
+static/*
+!static/.gitkeep

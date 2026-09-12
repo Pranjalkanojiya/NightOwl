@@ -1,15 +1,37 @@
+from rag import generate_answer
 from extractor import extract
 from chunker import chunk_documents
 from embeddings import create_embeddings
 from vector_store import VectorStore
 import os
+import shutil
+import html
 import streamlit as st
 
 # ---------- CONFIG ----------
 st.set_page_config("NightOwl", "🦉", "wide")
 
 UPLOAD_DIR = "data/documents"
+STATIC_DIR = "static"
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
+
+
+# ---------- HELPERS ----------
+def sync_static_files():
+    """Keep uploaded files available for clickable source links."""
+    for filename in os.listdir(STATIC_DIR):
+        path = os.path.join(STATIC_DIR, filename)
+        if os.path.isfile(path):
+            os.remove(path)
+
+    for filename in os.listdir(UPLOAD_DIR):
+        source = os.path.join(UPLOAD_DIR, filename)
+        destination = os.path.join(STATIC_DIR, filename)
+
+        if os.path.isfile(source):
+            shutil.copy2(source, destination)
 
 
 @st.cache_resource
@@ -27,6 +49,27 @@ def build_store(files):
             store.add(chunks, embeddings)
 
     return store
+
+
+def delete_file(filename):
+    path = os.path.join(UPLOAD_DIR, filename)
+
+    if os.path.exists(path):
+        os.remove(path)
+
+    static_path = os.path.join(STATIC_DIR, filename)
+
+    if os.path.exists(static_path):
+        os.remove(static_path)
+
+    build_store.clear()
+
+
+def open_source_url(filename, page):
+    from urllib.parse import quote
+
+    safe_filename = quote(filename)
+    return f"/app/static/{safe_filename}#page={page}"
 
 
 # ---------- STYLE ----------
@@ -200,6 +243,18 @@ div[data-testid="stTextInput"] input {
     box-shadow:0 8px 25px #4f46e540;
 }
 
+.delete-btn button {
+    background:#ef444415 !important;
+    border:1px solid #ef444440 !important;
+    color:#fca5a5 !important;
+    box-shadow:none !important;
+    min-height:32px !important;
+}
+
+.source-btn {
+    margin-top:8px;
+}
+
 .doc {
     padding:10px 12px;
     margin:7px 0;
@@ -219,6 +274,17 @@ div[data-testid="stTextInput"] input {
     font-size:10px;
     margin-top:3px;
 }
+
+div[data-testid="stForm"] {
+    border:0 !important;
+    padding:0 !important;
+}
+
+.ask-button button {
+    width:100%;
+    min-height:48px !important;
+    font-size:14px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -234,46 +300,6 @@ def stat(value, label):
         """,
         unsafe_allow_html=True
     )
-
-
-# ---------- SIDEBAR ----------
-with st.sidebar:
-
-    st.markdown(
-        '<div class="logo"><div class="owl">🦉</div>NightOwl</div>'
-        '<div class="sub">EVIDENCE INTELLIGENCE</div>',
-        unsafe_allow_html=True
-    )
-
-    st.divider()
-
-    st.caption("KNOWLEDGE VAULT")
-
-    files = sorted(os.listdir(UPLOAD_DIR))
-
-    if files:
-        for file in files:
-            size = os.path.getsize(
-                os.path.join(UPLOAD_DIR, file)
-            ) / 1024
-
-            st.markdown(
-                f"""
-                <div class="doc">
-                    📄 <b>{file}</b>
-                    <small>{size:.1f} KB · Ready</small>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-    else:
-        st.caption("No material uploaded yet.")
-
-    st.divider()
-
-    st.caption("🛡 Evidence-first mode")
-    st.caption("Answers will be grounded in your material.")
-
 
 # ---------- HERO ----------
 hero, status = st.columns([5, 1])
@@ -346,31 +372,127 @@ uploads = st.file_uploader(
 
 if uploads:
 
+    new_files = 0
+
     for file in uploads:
 
         path = os.path.join(UPLOAD_DIR, file.name)
 
-        with open(path, "wb") as out:
-            out.write(file.getbuffer())
+        # Avoid unnecessary rewrite if the file already exists
+        if not os.path.exists(path):
+            with open(path, "wb") as out:
+                out.write(file.getbuffer())
 
-    st.success(f"✓ {len(uploads)} file(s) added")
+            new_files += 1
 
-    files = sorted(os.listdir(UPLOAD_DIR))
+    if new_files:
+        build_store.clear()
+        sync_static_files()
 
+        st.success(f"✓ {new_files} new file(s) added")
 
+        # Refresh so the new files immediately appear in the sidebar
+        st.rerun()
+
+# ---------- DOCUMENT MANAGER ----------
+
+st.markdown("### 📚 Your Course Material")
+
+files = sorted(
+    [
+        f for f in os.listdir(UPLOAD_DIR)
+        if os.path.isfile(
+            os.path.join(UPLOAD_DIR, f)
+        )
+    ]
+)
+
+if files:
+
+    st.caption(
+        f"{len(files)} document(s) currently stored"
+    )
+
+    for file in files:
+
+        file_path = os.path.join(
+            UPLOAD_DIR,
+            file
+        )
+
+        size = os.path.getsize(file_path) / 1024
+
+        document_col, delete_col = st.columns([6, 1])
+
+        with document_col:
+
+            st.markdown(
+                f"""
+                <div class="doc">
+                    📄 <b>{html.escape(file)}</b>
+                    <small>
+                        {size:.1f} KB · Available for questions
+                    </small>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        with delete_col:
+
+            if st.button(
+                "🗑 Delete",
+                key=f"delete_document_{file}",
+                help=f"Delete {file}"
+            ):
+
+                delete_file(file)
+
+                st.toast(
+                    f"{file} deleted",
+                    icon="🗑️"
+                )
+
+                st.rerun()
+
+else:
+
+    st.info("No course material uploaded yet.")
+    
 # ---------- ASK ----------
 st.markdown("### 💬 Ask your course")
 
-question = st.text_input(
-    "Ask NightOwl",
-    placeholder="Ask something from your study material..."
-)
+with st.form("question_form"):
 
-if question:
+    question = st.text_input(
+        "Ask NightOwl",
+        placeholder="Ask something from your study material...",
+        label_visibility="collapsed"
+    )
 
-    files = sorted(os.listdir(UPLOAD_DIR))
+    st.markdown('<div class="ask-button">', unsafe_allow_html=True)
 
-    if not files:
+    submitted = st.form_submit_button(
+        "🦉 Ask NightOwl"
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+if submitted:
+
+    files = sorted(
+        [
+            f for f in os.listdir(UPLOAD_DIR)
+            if os.path.isfile(os.path.join(UPLOAD_DIR, f))
+        ]
+    )
+
+    if not question.strip():
+
+        st.warning("Please enter a question.")
+
+    elif not files:
 
         st.warning("Upload study material first.")
 
@@ -378,9 +500,13 @@ if question:
 
         with st.spinner("Searching your knowledge vault..."):
 
+            sync_static_files()
+
             store = build_store(files)
 
-            question_embedding = create_embeddings([question])[0]
+            question_embedding = create_embeddings(
+                [question]
+            )[0]
 
             results = store.search(
                 question_embedding,
@@ -391,31 +517,70 @@ if question:
         if not results:
 
             st.warning(
-                "I couldn't find enough relevant information "
+                "I couldn't find enough information "
                 "in your uploaded material."
             )
 
         else:
 
-            st.markdown("### Evidence Found")
+            with st.spinner("Thinking from your course material..."):
 
-            for result in results:
+                answer = generate_answer(
+                    question,
+                    results
+                )
+
+            st.markdown("### Answer")
+
+            st.markdown(
+                f"""
+                <div class="card">
+                    {answer}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            st.markdown("### Sources")
+
+            for index, result in enumerate(results):
 
                 chunk = result["chunk"]
 
                 st.markdown(
                     f"""
-                    **{chunk['source']} — Page {chunk['page']}**
+                    <div class="doc">
+                        📄 <b>{html.escape(chunk['source'])}</b>
+                        <small>
+                            Page {chunk['page']}
+                            · Relevance {result['score']:.2f}
+                        </small>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
-                    **Similarity:** `{result['score']:.4f}`
+                source_url = open_source_url(
+                    chunk["source"],
+                    chunk["page"]
+                )
 
-                    {chunk['text'][:500]}
-                    """
+                st.link_button(
+                    f"↗ Open {chunk['source']} · Page {chunk['page']}",
+                    source_url,
+                    use_container_width=True
                 )
 
 
 # ---------- STATS ----------
 st.write("")
+
+files = sorted(
+    [
+        f for f in os.listdir(UPLOAD_DIR)
+        if os.path.isfile(os.path.join(UPLOAD_DIR, f))
+    ]
+)
 
 cols = st.columns(4)
 

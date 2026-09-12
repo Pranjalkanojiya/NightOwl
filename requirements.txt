@@ -4,3 +4,5 @@ python-pptx
 pymupdf
 sentence-transformers
 faiss-cpu
+google-genai
+python-dotenv
