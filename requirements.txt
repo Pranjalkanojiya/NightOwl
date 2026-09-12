@@ -1,3 +1,6 @@
 streamlit
 pypdf
 python-pptx
+pymupdf
+sentence-transformers
+faiss-cpu
